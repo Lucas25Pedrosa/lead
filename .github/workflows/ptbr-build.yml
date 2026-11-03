@@ -1,0 +1,49 @@
+name: Build Lead PT-BR
+
+on:
+  push:
+    branches: [pt-br]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Theos
+        uses: waruhachi/theos-action@v2.4.6
+        with:
+          theos-src: waruhachi/theos
+          theos-branch: main
+          sdks-src: waruhachi/sdks
+          sdks-branch: main
+
+      - name: Validate PT-BR source
+        shell: bash
+        run: |
+          test -f Sources/tgapi/UI/PTBRLocalization.xm
+          test -f Sources/tgapi/UI/LeadPTBRFeatureStrings.h
+          test -f Sources/tgapi/UI/LeadPTBRUIStrings.h
+          grep -q 'pt-BR' Sources/tgapi/UI/PTBRLocalization.xm
+          grep -q 'Português (Brasil)' Sources/tgapi/UI/PTBRLocalization.xm
+
+      - name: Build Lead
+        shell: bash
+        run: |
+          make clean package FINALPACKAGE=1 STRIP=0
+          test -f packages/Lead.dylib
+          shasum -a 256 packages/Lead.dylib
+          file packages/Lead.dylib
+
+      - name: Upload PT-BR build
+        uses: actions/upload-artifact@v4
+        with:
+          name: Lead-2.0-PTBR
+          path: |
+            packages/Lead.dylib
+            packages/*.deb
+          if-no-files-found: error
