@@ -34,7 +34,7 @@ jobs:
       - name: Build Lead
         shell: bash
         run: |
-          make clean package FINALPACKAGE=1 STRIP=0
+          make clean package FINALPACKAGE=1
           test -f packages/Lead.dylib
           shasum -a 256 packages/Lead.dylib
           file packages/Lead.dylib
