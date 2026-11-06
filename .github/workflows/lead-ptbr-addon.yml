@@ -1,0 +1,73 @@
+name: Build Lead 2.0.2 PT-BR companion
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/lead-ptbr-addon.yml
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout existing PT-BR translations and companion source
+        uses: actions/checkout@v4
+        with:
+          ref: pt-br
+          persist-credentials: false
+
+      - name: Validate source and translations
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s ptbr-addon/src/LeadPTBR.m
+          test -s ptbr-addon/Makefile
+          test -s Sources/tgapi/UI/LeadPTBRFeatureStrings.h
+          test -s Sources/tgapi/UI/LeadPTBRUIStrings.h
+          python3 - <<'PY'
+          import pathlib, re
+          feature = pathlib.Path('Sources/tgapi/UI/LeadPTBRFeatureStrings.h').read_text()
+          ui = pathlib.Path('Sources/tgapi/UI/LeadPTBRUIStrings.h').read_text()
+          pattern = r'@"([^"]+)"\s*:\s*@"'
+          f, u = re.findall(pattern, feature), re.findall(pattern, ui)
+          assert len(f) >= 85, f"Too few feature translations: {len(f)}"
+          assert len(u) >= 120, f"Too few UI translations: {len(u)}"
+          assert not set(f).intersection(u), "Duplicate keys across translation tables"
+          print(f"Verified {len(f)} feature and {len(u)} UI strings; no duplicates.")
+          PY
+
+      - name: Set up Theos and iOS SDK
+        uses: waruhachi/theos-action@v2.4.6
+        with:
+          theos-src: waruhachi/theos
+          theos-branch: main
+          sdks-src: waruhachi/sdks
+          sdks-branch: main
+
+      - name: Build the standalone translation dylib
+        shell: bash
+        run: |
+          set -euo pipefail
+          make -C ptbr-addon clean all FINALPACKAGE=1
+          mkdir -p out
+          DYLIB="$(find ptbr-addon -type f -name 'LeadPTBR.dylib' | head -n 1)"
+          test -n "$DYLIB"
+          test -s "$DYLIB"
+          cp "$DYLIB" out/LeadPTBR.dylib
+          file out/LeadPTBR.dylib
+          lipo -info out/LeadPTBR.dylib
+          shasum -a 256 out/LeadPTBR.dylib > out/SHA256.txt
+          cat out/SHA256.txt
+
+      - name: Upload compiled library
+        uses: actions/upload-artifact@v4
+        with:
+          name: Lead-2.0.2-PTBR-companion
+          path: out/
+          if-no-files-found: error
+          retention-days: 30
