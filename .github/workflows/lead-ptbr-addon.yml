@@ -26,6 +26,7 @@ jobs:
         run: |
           set -euo pipefail
           test -s ptbr-addon/src/LeadPTBR.m
+          test -s ptbr-addon/src/LeadPTBR202Strings.h
           test -s ptbr-addon/Makefile
           test -s Sources/tgapi/UI/LeadPTBRFeatureStrings.h
           test -s Sources/tgapi/UI/LeadPTBRUIStrings.h
@@ -33,12 +34,14 @@ jobs:
           import pathlib, re
           feature = pathlib.Path('Sources/tgapi/UI/LeadPTBRFeatureStrings.h').read_text()
           ui = pathlib.Path('Sources/tgapi/UI/LeadPTBRUIStrings.h').read_text()
+          new = pathlib.Path('ptbr-addon/src/LeadPTBR202Strings.h').read_text()
           pattern = r'@"([^"]+)"\s*:\s*@"'
-          f, u = re.findall(pattern, feature), re.findall(pattern, ui)
+          f, u, added = re.findall(pattern, feature), re.findall(pattern, ui), re.findall(pattern, new)
           assert len(f) >= 85, f"Too few feature translations: {len(f)}"
           assert len(u) >= 120, f"Too few UI translations: {len(u)}"
-          assert not set(f).intersection(u), "Duplicate keys across translation tables"
-          print(f"Verified {len(f)} feature and {len(u)} UI strings; no duplicates.")
+          assert len(added) == 39, f"Expected 39 Lead 2.0.2 translations, found {len(added)}"
+          assert len(set(f+u+added)) == len(f+u+added), "Duplicate translation keys"
+          print(f"Verified {len(f)} feature, {len(u)} UI and {len(added)} Lead 2.0.2 strings; no duplicates.")
           PY
 
       - name: Set up Theos and iOS SDK
