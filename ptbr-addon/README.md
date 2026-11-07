@@ -1,54 +1,63 @@
-# Lead 2.0.2 — Português (Brasil), complemento independente
+# Lead 2.0.2 — complemento Português (Brasil), revisão 2
 
-Esta pasta compila apenas **LeadPTBR.dylib**, uma biblioteca Objective-C
-complementar à **Lead 2.0.2 oficial**. Não recompila, altera nem incorpora o
-binário oficial da Lead; preserva os hotfixes da versão 2.0.2.
+**Escopo:** compilação independente de \`LeadPTBR.dylib\` para ser usada
+**junto** da \`Lead.dylib\` oficial da versão 2.0.2. O hotfix não é modificado.
 
-## Localização dos arquivos
+## Traduções
 
-As traduções originais já revisadas do projeto são reutilizadas diretamente
-da branch \`pt-br\` deste repositório, sem duplicação:
+O projeto reutiliza as 227 traduções validadas na branch \`pt-br\`, em:
+- \`Sources/tgapi/UI/LeadPTBRFeatureStrings.h\` — recursos;
+- \`Sources/tgapi/UI/LeadPTBRUIStrings.h\` — menus;
+- \`ptbr-addon/src/LeadPTBR202Strings.h\` — **39 chaves novas** da 2.0.2.
 
-- \`Sources/tgapi/UI/LeadPTBRFeatureStrings.h\` — funcionalidades;
-- \`Sources/tgapi/UI/LeadPTBRUIStrings.h\` — menus e interface.
+Chaves sem tradução retornam à implementação original do Lead,
+preservando o texto original e evitando interferir em funcionalidades.
 
-O complemento redireciona exclusivamente o método
-\`+[LeadLocalization localizedStringForKey:]\` para retornar texto em pt-BR
-quando há uma tradução conhecida. Chaves novas/desconhecidas são encaminhadas
-à implementação **original** da Lead 2.0.2.
+## Idioma — corrigido na revisão 2
 
-Também tenta incluir \`Português (Brasil)\` no seletor \`LanguageSelector\`.
-O complemento guarda sua escolha em \`LeadPTBRAddonEnabled\`. A preferência
-interna \`LeadLanguage\` da Lead oficial fica em \`en\` quando pt-BR está ativo:
-isso evita o reset de idioma desconhecido do hotfix. Mudanças de idioma exigem
-fechar e abrir o aplicativo.
+A revisão inicial usava \`LeadPTBRAddonEnabled\`, separado da preferência
+\`LeadLanguage\` do Lead. Isso fazia Português aparecer mesmo com English
+selecionado e mostrava "English" na tela principal.
 
-## Compilar pelo GitHub Actions
+A revisão 2 utiliza exclusivamente a preferência **nativa** \`LeadLanguage\`:
+- \`pt-BR\`: aplica os textos traduzidos, inclusive no seletor;
+- \`en\`, \`es\`, \`ru\` e demais idiomas: mantém a implementação e os
+  textos oficiais do desenvolvedor, **sem** aplicar a tradução portuguesa;
+- seleciona idiomas pela implementação original da Lead;
+- preserva \`pt-BR\` durante \`-[LeadLocalization loadDefault]\`, evitando
+  que a versão 2.0.2 restaure o idioma desconhecido para \`en\`;
+- substitui o código \`pt-BR\` pelo nome \`Português (Brasil)\` no resumo
+  da seleção no menu principal.
 
-No repositório \`Lucas25Pedrosa/lead\`, abra **Actions → Build Lead 2.0.2 PT-BR
-companion → Run workflow**. A ação usa um runner macOS com Theos e faz checkout
-da branch \`pt-br\`, onde estão os arquivos de tradução. No fim, baixe o
-artefato \`Lead-2.0.2-PTBR-companion\`.
+Há uma **migração única**: quem utilizava a revisão anterior com o
+português ativado e \`LeadLanguage=en\` passa a \`pt-BR\`. Preferências
+originais para outros idiomas são preservadas. Seleções futuras ficam
+armazenadas apenas na preferência original.
 
-Compilação local, se houver Theos e SDK iOS:
+## Compilação
 
+GitHub Actions → **Build Lead 2.0.2 PT-BR companion** → Run workflow.
+O workflow na branch principal faz checkout do código atualizado em \`pt-br\`
+e disponibiliza o artefato \`Lead-2.0.2-PTBR-companion\`.
+
+Para compilar localmente com Theos:
 \`\`\`sh
 make -C ptbr-addon clean all FINALPACKAGE=1
 \`\`\`
 
-## Uso e limites
+## Testes
 
-1. Use a Lead **2.0.2 oficial** sem alterações no aplicativo.
-2. Injete também \`LeadPTBR.dylib\` **somente no executável principal**,
-   garantindo que as duas bibliotecas sejam carregadas.
-3. **Não** adicione a biblioteca de tradução às extensões de notificação.
-4. Teste idioma, menus, outros idiomas e reinício no dispositivo antes de
-   qualquer implantação no Core ou injector.
+Injetar a Lead oficial e o complemento na aplicação principal,
+em \`Frameworks/\`, com a Lead oficial carregada antes da
+\`LeadPTBR.dylib\`. Não injetar o complemento nas extensões.
 
-**Protótipo:** os seletores da Lead 2.0.2 foram observados no IPA, mas a
-compatibilidade em runtime e a ordem de inicialização ainda precisam ser
-verificadas. A cobertura é a da tradução 2.0; novas chaves da 2.0.2 podem
-aparecer em inglês até tradução posterior.
+1. Abrir Lead → Idioma; confirmar **Português (Brasil)**.
+2. Alternar para **English** e reiniciar: verificar que não há textos PT-BR.
+3. Alternar para Español/Russian e reiniciar: idioma oficial deve voltar.
+4. Retornar a Português (Brasil): tradução e menu devem combinar.
+5. Conferir **Verificação de compatibilidade** e outras 39 novas chaves.
+6. Verificar notificações com texto e funções da Lead oficial.
 
-A implementação não substitui os hooks funcionais, código de rede,
-licenciamento, infraestrutura de notificações ou correções do hotfix.
+**Ainda é um protótipo:** a compilação verifica sintaxe/arquitetura,
+mas precisa de validação em runtime no iPhone. Até lá não atualizar
+o injector ou Core automaticamente.
