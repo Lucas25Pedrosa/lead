@@ -9,14 +9,35 @@
 
 #import "../../Sources/tgapi/UI/LeadPTBRFeatureStrings.h"
 #import "../../Sources/tgapi/UI/LeadPTBRUIStrings.h"
+#import "LeadPTBR202Strings.h"
 
-static NSString *const kPTBRPreference = @"LeadPTBRAddonEnabled";
+// Use the native LeadLanguage preference, so the official menu and other
+// languages remain synchronized. The old version used a separate bool and
+// accidentally translated every language into Portuguese.
 static NSString *const kOriginalLeadPreference = @"LeadLanguage";
 static NSString *const kPTBRLanguage = @"pt-BR";
+static NSString *const kLegacyAddonKey = @"LeadPTBRAddonEnabled";
+static NSString *const kMigrationKey = @"LeadPTBRAddonMigratedV2";
 
-static BOOL PTBREnabled(void) {
-    id configured = [[NSUserDefaults standardUserDefaults] objectForKey:kPTBRPreference];
-    return configured == nil ? YES : [configured boolValue];
+static BOOL PTBRActive(void) {
+    NSString *language = [[NSUserDefaults standardUserDefaults]
+        stringForKey:kOriginalLeadPreference];
+    return [language isEqualToString:kPTBRLanguage];
+}
+
+// One-time migration of the previous, forced-Portuguese add-on. Do not
+// override an already-selected non-English language.
+static void PTBRMigrateOldPreference(void) {
+    NSUserDefaults *prefs = [NSUserDefaults standardUserDefaults];
+    if ([prefs boolForKey:kMigrationKey]) return;
+    NSString *code = [prefs stringForKey:kOriginalLeadPreference] ?: @"en";
+    id legacy = [prefs objectForKey:kLegacyAddonKey];
+    BOOL usedToForcePortuguese = legacy == nil || [legacy boolValue];
+    if (usedToForcePortuguese && [code isEqualToString:@"en"]) {
+        [prefs setObject:kPTBRLanguage forKey:kOriginalLeadPreference];
+    }
+    [prefs setBool:YES forKey:kMigrationKey];
+    [prefs synchronize];
 }
 
 static NSDictionary<NSString *, NSString *> *PTBRDictionary(void) {
@@ -25,6 +46,7 @@ static NSDictionary<NSString *, NSString *> *PTBRDictionary(void) {
     dispatch_once(&onceToken, ^{
         NSMutableDictionary *merged = [LeadPTBRUIStrings() mutableCopy];
         [merged addEntriesFromDictionary:LeadPTBRFeatureStrings()];
+        [merged addEntriesFromDictionary:LeadPTBR202Strings()];
         translations = [merged copy];
     });
     return translations;
@@ -33,7 +55,7 @@ static NSDictionary<NSString *, NSString *> *PTBRDictionary(void) {
 static NSString *(*originalLocalizedString)(id, SEL, NSString *) = NULL;
 
 static NSString *PTBRLocalizedString(id receiver, SEL selector, NSString *key) {
-    if (PTBREnabled() && [key isKindOfClass:[NSString class]]) {
+    if (PTBRActive() && [key isKindOfClass:[NSString class]]) {
         NSString *translated = PTBRDictionary()[key];
         if (translated) return translated;
     }
@@ -42,8 +64,40 @@ static NSString *PTBRLocalizedString(id receiver, SEL selector, NSString *key) {
     return key;
 }
 
+// In Lead 2.0.2, -loadDefault resets unknown language codes to "en".
+// We bootstrap the official English dictionary, then restore the native
+// preference to pt-BR. Only the localizedStringForKey: wrapper translates;
+// all functional hooks remain untouched.
+static void (*originalLoadDefault)(id, SEL) = NULL;
+
+static void PTBRLoadDefault(id receiver, SEL selector) {
+    if (!originalLoadDefault) return;
+    if (!PTBRActive()) {
+        originalLoadDefault(receiver, selector);
+        return;
+    }
+    NSUserDefaults *prefs = [NSUserDefaults standardUserDefaults];
+    [prefs setObject:@"en" forKey:kOriginalLeadPreference];
+    @try {
+        originalLoadDefault(receiver, selector);
+    } @finally {
+        [prefs setObject:kPTBRLanguage forKey:kOriginalLeadPreference];
+    }
+}
+
+// Lead's home screen has a private "LeadLanguageNames" map without pt-BR.
+// Intercept only the value rendered as the language name; leave other rows
+// and all other languages exactly as Lead originally displays them.
+static void (*originalCellShowValue)(id, SEL, NSString *, BOOL) = NULL;
+static void PTBRCellShowValue(id receiver, SEL selector, NSString *value,
+                              BOOL chevron) {
+    if (PTBRActive() && [value isEqualToString:kPTBRLanguage]) {
+        value = @"Português (Brasil)";
+    }
+    if (originalCellShowValue) originalCellShowValue(receiver, selector, value, chevron);
+}
+
 static void (*originalViewDidLoad)(id, SEL) = NULL;
-static void (*originalDidSelectRow)(id, SEL, UITableView *, NSIndexPath *) = NULL;
 
 static NSArray *PTBRLanguages(id controller) {
     @try {
@@ -74,89 +128,33 @@ static void PTBRReloadLanguageTable(id controller) {
 static void PTBRViewDidLoad(id controller, SEL selector) {
     if (originalViewDidLoad) originalViewDidLoad(controller, selector);
     NSArray *languages = PTBRLanguages(controller);
-    if (!languages) return; // Lead changed its UI: skip without breaking it.
+    if (!languages) return;
 
-    BOOL found = NO;
     for (id item in languages) {
         if ([item isKindOfClass:[NSDictionary class]] &&
             [item[@"code"] isEqualToString:kPTBRLanguage]) {
-            found = YES;
-            break;
+            return;
         }
     }
-    if (!found) {
-        NSMutableArray *updated = [languages mutableCopy];
-        NSDictionary *portuguese = @{
-            @"code": kPTBRLanguage,
-            @"name": @"Português (Brasil)",
-            @"flag": @"🇧🇷"
-        };
-        NSUInteger englishIndex = [updated indexOfObjectPassingTest:
-            ^BOOL(id item, NSUInteger idx, BOOL *stop) {
-                (void)idx; (void)stop;
-                return [item isKindOfClass:[NSDictionary class]] &&
-                       [item[@"code"] isEqualToString:@"en"];
-            }];
-        NSUInteger insertAt = englishIndex == NSNotFound ? 0 :
-            MIN(englishIndex + 1, updated.count);
-        [updated insertObject:portuguese atIndex:insertAt];
-        if (!PTBRSetValue(controller, @"languages", [updated copy])) return;
-    }
-    if (PTBREnabled()) PTBRSetValue(controller, @"currentCode", kPTBRLanguage);
-    PTBRReloadLanguageTable(controller);
-}
-
-static void PTBRDidSelectRow(id controller, SEL selector,
-                             UITableView *tableView, NSIndexPath *indexPath) {
-    NSArray *languages = PTBRLanguages(controller);
-    if (!languages || indexPath.row < 0 || (NSUInteger)indexPath.row >= languages.count) {
-        if (originalDidSelectRow) originalDidSelectRow(controller, selector, tableView, indexPath);
-        return;
-    }
-    id item = languages[(NSUInteger)indexPath.row];
-    NSString *code = [item isKindOfClass:[NSDictionary class]] ? item[@"code"] : nil;
-    if (![code isKindOfClass:[NSString class]]) {
-        if (originalDidSelectRow) originalDidSelectRow(controller, selector, tableView, indexPath);
-        return;
-    }
-
-    // Without PT-BR active, delegate selection of original languages to Lead.
-    if (!PTBREnabled() && ![code isEqualToString:kPTBRLanguage]) {
-        if (originalDidSelectRow) originalDidSelectRow(controller, selector, tableView, indexPath);
-        return;
-    }
-
-    [tableView deselectRowAtIndexPath:indexPath animated:YES];
-    if (PTBREnabled() && [code isEqualToString:kPTBRLanguage]) return;
-
-    NSString *name = [item[@"name"] isKindOfClass:[NSString class]] ?
-        item[@"name"] : code;
-    UIAlertController *alert = [UIAlertController
-        alertControllerWithTitle:name
-                        message:@"O idioma será aplicado após fechar e abrir o aplicativo."
-                 preferredStyle:UIAlertControllerStyleAlert];
-
-    [alert addAction:[UIAlertAction actionWithTitle:@"Cancelar"
-                                             style:UIAlertActionStyleCancel
-                                           handler:nil]];
-    [alert addAction:[UIAlertAction actionWithTitle:@"Aplicar"
-                                             style:UIAlertActionStyleDefault
-                                           handler:^(__unused UIAlertAction *action) {
-        NSUserDefaults *prefs = [NSUserDefaults standardUserDefaults];
-        BOOL wantsPortuguese = [code isEqualToString:kPTBRLanguage];
-        [prefs setBool:wantsPortuguese forKey:kPTBRPreference];
-        // Lead 2.0.2 does not recognize pt-BR in its embedded language table.
-        // Keep its internal language valid and translate through the companion.
-        if (wantsPortuguese) {
-            [prefs setObject:@"en" forKey:kOriginalLeadPreference];
-        } else {
-            [prefs setObject:code forKey:kOriginalLeadPreference];
-        }
-        [prefs synchronize];
-        PTBRSetValue(controller, @"currentCode", code);
+    NSMutableArray *updated = [languages mutableCopy];
+    NSDictionary *portuguese = @{
+        @"code": kPTBRLanguage,
+        @"name": @"Português (Brasil)",
+        @"flag": @"🇧🇷"
+    };
+    NSUInteger englishIndex = [updated indexOfObjectPassingTest:
+        ^BOOL(id item, NSUInteger idx, BOOL *stop) {
+            (void)idx; (void)stop;
+            return [item isKindOfClass:[NSDictionary class]] &&
+                   [item[@"code"] isEqualToString:@"en"];
+        }];
+    NSUInteger insertAt = englishIndex == NSNotFound ? 0 :
+        MIN(englishIndex + 1, updated.count);
+    [updated insertObject:portuguese atIndex:insertAt];
+    if (PTBRSetValue(controller, @"languages", [updated copy])) {
+        // The original selector uses LeadLanguage to mark the selected item.
         PTBRReloadLanguageTable(controller);
-    }]];
-    [(UIViewController *)controller presentViewController:alert animated:YES completion:nil];
+    }
 }
 
 __attribute__((constructor))
@@ -166,25 +164,37 @@ static void LeadPTBRInstall(void) {
         Method localeMethod = localization ?
             class_getClassMethod(localization, @selector(localizedStringForKey:)) : NULL;
         if (!localeMethod) {
-            NSLog(@"[LeadPTBR] LeadLocalization missing; leaving official Lead unchanged");
+            NSLog(@"[LeadPTBR] LeadLocalization unavailable; keeping original Lead");
             return;
         }
         originalLocalizedString = (NSString *(*)(id, SEL, NSString *))
             method_setImplementation(localeMethod, (IMP)PTBRLocalizedString);
 
-        Class selectorClass = objc_getClass("LanguageSelector");
-        if (selectorClass) {
-            Method viewMethod = class_getInstanceMethod(selectorClass, @selector(viewDidLoad));
-            Method selectionMethod = class_getInstanceMethod(
-                selectorClass, @selector(tableView:didSelectRowAtIndexPath:));
-            if (viewMethod && selectionMethod) {
-                originalViewDidLoad = (void (*)(id, SEL))
-                    method_setImplementation(viewMethod, (IMP)PTBRViewDidLoad);
-                originalDidSelectRow = (void (*)(id, SEL, UITableView *, NSIndexPath *))
-                    method_setImplementation(selectionMethod, (IMP)PTBRDidSelectRow);
-            }
+        Method loadDefault = class_getInstanceMethod(localization, @selector(loadDefault));
+        if (loadDefault) {
+            originalLoadDefault = (void (*)(id, SEL))
+                method_setImplementation(loadDefault, (IMP)PTBRLoadDefault);
         }
-        NSLog(@"[LeadPTBR] Companion loaded; %lu translations; enabled=%@",
-              (unsigned long)PTBRDictionary().count, PTBREnabled() ? @"YES" : @"NO");
+
+        Class selectorClass = objc_getClass("LanguageSelector");
+        Method viewMethod = selectorClass ?
+            class_getInstanceMethod(selectorClass, @selector(viewDidLoad)) : NULL;
+        if (viewMethod) {
+            originalViewDidLoad = (void (*)(id, SEL))
+                method_setImplementation(viewMethod, (IMP)PTBRViewDidLoad);
+        }
+
+        Class cellClass = objc_getClass("LeadCell");
+        Method valueMethod = cellClass ?
+            class_getInstanceMethod(cellClass, @selector(showValue:chevron:)) : NULL;
+        if (valueMethod) {
+            originalCellShowValue = (void (*)(id, SEL, NSString *, BOOL))
+                method_setImplementation(valueMethod, (IMP)PTBRCellShowValue);
+        }
+
+        PTBRMigrateOldPreference();
+        NSLog(@"[LeadPTBR] Loaded, %lu translations; LeadLanguage=%@",
+              (unsigned long)PTBRDictionary().count,
+              [[NSUserDefaults standardUserDefaults] stringForKey:kOriginalLeadPreference]);
     }
 }
